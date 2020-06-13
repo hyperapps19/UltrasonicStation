@@ -4,9 +4,10 @@
 #include "config/mqtt.conf.h"
 #include <EEPROM.h>
 
-#define VERSION "0.3"
+#define VERSION "0.4"
 
 #define EEPROM_ID_ADDR 0
+
 #define TRIG_PIN D7
 
 WiFiClient espClient;
@@ -32,6 +33,7 @@ void emitUltrasoundSignal()
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
+  delay(2);
 }
 void setup_wifi()
 {
@@ -94,6 +96,7 @@ void setup()
 {
   EEPROM.begin(sizeof(uint16_t));
   currentId = EEPROM.get(EEPROM_ID_ADDR, currentId);
+  pinMode(TRIG_PIN, OUTPUT);
   Serial.begin(115200);
   Serial.println();
   Serial.println("SmartRescuer Project --- Node Firmware v" + String(VERSION));
