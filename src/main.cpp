@@ -1,3 +1,6 @@
+#include <Arduino.h>
+#include <bitset>
+
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
@@ -8,7 +11,11 @@
 
 #define EEPROM_ID_ADDR 0
 
-#define TRIG_PIN D7
+const int trigPin = D1;
+const int echoPin = D2;
+
+#define SAMPLES_ARR_LENGTH 32
+std::bitset<SAMPLES_ARR_LENGTH> samples;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -27,14 +34,58 @@ int value = 0;
 
 #define SHELLSTART_STR "$ "
 
-void emitUltrasoundSignal()
+void Trigger_US()
 {
-  DEBUG("Emitting ultrasound signal...");
-  digitalWrite(TRIG_PIN, HIGH);
+  // Fake trigger the US sensor
+  digitalWrite(trigPin, HIGH);
   delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  delay(2);
+  digitalWrite(trigPin, LOW);
 }
+
+inline bool checkDurationValidity(unsigned long duration)
+{
+  return duration <= 50000 && duration >= 20;
+}
+
+unsigned long getDuration()
+{
+  Trigger_US();
+  while (digitalRead(echoPin) == HIGH)
+    ;
+  delay(2);
+  Trigger_US();
+  return pulseIn(echoPin, HIGH, 100000UL);
+}
+
+bool checkForSignalPresence(bool newSignal)
+{
+  samples <<= 1;
+  if (newSignal)
+    samples.set(0);
+  if (samples.count() >= (SAMPLES_ARR_LENGTH / 2))
+    return true;
+  return false;
+}
+
+int state = -1;
+void Iteration_US()
+{
+  bool sig = checkForSignalPresence(checkDurationValidity(getDuration()));
+  if ((state == -1) || (state == 0 && sig) || (state == 1 && !sig))
+  {
+    if (sig)
+    {
+      DEBUG("Signal");
+      state = 1;
+    }
+    else
+    {
+      DEBUG("No Signal");
+      state = 0;
+    }
+  }
+}
+
 void setup_wifi()
 {
   delay(10);
@@ -59,8 +110,6 @@ void setup_wifi()
 
 void callback(char *topic, byte *payload, unsigned int length)
 {
-  if (atoi(std::string((const char *)payload, length).c_str()) == currentId)
-    emitUltrasoundSignal();
 }
 
 void reconnect(int id)
@@ -96,13 +145,13 @@ void setup()
 {
   EEPROM.begin(sizeof(uint16_t));
   currentId = EEPROM.get(EEPROM_ID_ADDR, currentId);
-  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
   Serial.begin(115200);
   Serial.println();
   Serial.println("SmartRescuer Project --- Node Firmware v" + String(VERSION));
   Serial.println("Type \"help\" in shell for commands list");
   Serial.println();
-  Serial.println(SHELLSTART_STR);
   setup_wifi();
   client.setServer(MQTT_HOST, MQTT_PORT);
   client.setCallback(callback);
@@ -110,11 +159,13 @@ void setup()
 
 void loop()
 {
+#ifdef DEBUGGING_ENABLED
   if (Serial.available())
   {
     String cmd = Serial.readString();
+    Serial.print(SHELLSTART_STR);
     Serial.println(cmd);
-    if (cmd == "change_id")
+    if (cmd.startsWith("change_id"))
     {
       Serial.println("Please enter new ID (0..65535): ");
       while (!Serial.available())
@@ -125,15 +176,17 @@ void loop()
       EEPROM.commit();
       Serial.println("Written to EEPROM.");
     }
-    else if (cmd == "get_id")
+    else if (cmd.startsWith("get_id"))
       Serial.println(String("Current ID: ") + currentId);
-    else if (cmd == "help")
+    else if (cmd.startsWith("help"))
       Serial.println(help);
     else
       Serial.println("No such command. Type \"help\" in shell for commands list.");
     Serial.print(SHELLSTART_STR);
   }
+#endif
 
+  Iteration_US();
   if (!client.connected())
     reconnect(currentId);
   client.loop();
