@@ -70,7 +70,9 @@ bool checkForSignalPresence(bool newSignal)
 int state = -1;
 void Iteration_US()
 {
-  bool sig = checkForSignalPresence(checkDurationValidity(getDuration()));
+  auto d = getDuration();
+  Serial.println(d);
+  bool sig = checkForSignalPresence(checkDurationValidity(d));
   if ((state == -1) || (state == 0 && sig) || (state == 1 && !sig))
   {
     if (sig)
@@ -152,9 +154,9 @@ void setup()
   Serial.println("SmartRescuer Project --- Node Firmware v" + String(VERSION));
   Serial.println("Type \"help\" in shell for commands list");
   Serial.println();
-  setup_wifi();
-  client.setServer(MQTT_HOST, MQTT_PORT);
-  client.setCallback(callback);
+  //setup_wifi();
+  //client.setServer(MQTT_HOST, MQTT_PORT);
+  //client.setCallback(callback);
 }
 
 void loop()
@@ -187,7 +189,7 @@ void loop()
 #endif
 
   Iteration_US();
-  if (!client.connected())
-    reconnect(currentId);
-  client.loop();
+ // if (!client.connected())
+  //  reconnect(currentId);
+ // client.loop();
 }
