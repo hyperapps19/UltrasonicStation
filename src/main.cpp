@@ -1,29 +1,24 @@
 #include <Arduino.h>
-#include <bitset>
+#include <EEPROM.h>
 
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-#include "config/mqtt.conf.h"
-#include <EEPROM.h>
+#include "GyverFilters.h"
 
-#define VERSION "0.4"
+#include "config/mqtt.conf.h"
+
+#define VERSION "1.1"
 
 #define EEPROM_ID_ADDR 0
 
-const int trigPin = D1;
-const int echoPin = D2;
-
-#define SAMPLES_ARR_LENGTH 32
-std::bitset<SAMPLES_ARR_LENGTH> samples;
+#define TRIG_PIN D1
+#define ECHO_PIN D2
+#define SYNC_PIN D8
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 uint16_t currentId;
-unsigned long lastMsg = 0;
-#define MSG_BUFFER_SIZE (50)
-char msg[MSG_BUFFER_SIZE];
-int value = 0;
 
 #define DEBUGGING_ENABLED
 #ifdef DEBUGGING_ENABLED
@@ -34,57 +29,46 @@ int value = 0;
 
 #define SHELLSTART_STR "$ "
 
-void Trigger_US()
+GKalman filter(40, 40, 0.5);
+
+void ICACHE_RAM_ATTR Trigger_US()
 {
   // Fake trigger the US sensor
-  digitalWrite(trigPin, HIGH);
+  digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
-  digitalWrite(trigPin, LOW);
+  digitalWrite(TRIG_PIN, LOW);
 }
 
-inline bool checkDurationValidity(unsigned long duration)
+bool ICACHE_RAM_ATTR checkDurationValidity(unsigned long duration)
 {
-  return duration <= 50000 && duration >= 20;
+  return duration <= 20000 && duration >= 20;
 }
 
-unsigned long getDuration()
+unsigned long ICACHE_RAM_ATTR getDuration(void)
 {
   Trigger_US();
-  while (digitalRead(echoPin) == HIGH)
+  while (digitalRead(ECHO_PIN) == HIGH)
     ;
   delay(2);
   Trigger_US();
-  return pulseIn(echoPin, HIGH, 100000UL);
+  return pulseIn(ECHO_PIN, HIGH, 100000UL);
 }
 
-bool checkForSignalPresence(bool newSignal)
+bool ICACHE_RAM_ATTR checkSignal(void)
 {
-  samples <<= 1;
-  if (newSignal)
-    samples.set(0);
-  if (samples.count() >= (SAMPLES_ARR_LENGTH / 2))
-    return true;
-  return false;
+  return checkDurationValidity(getDuration());
 }
 
-int state = -1;
-void Iteration_US()
+void ICACHE_RAM_ATTR onStartUS(void)
 {
-  auto d = getDuration();
-  Serial.println(d);
-  bool sig = checkForSignalPresence(checkDurationValidity(d));
-  if ((state == -1) || (state == 0 && sig) || (state == 1 && !sig))
+  if (client.connected())
   {
-    if (sig)
-    {
-      DEBUG("Signal");
-      state = 1;
-    }
-    else
-    {
-      DEBUG("No Signal");
-      state = 0;
-    }
+    uint64_t timeBegin = micros64();
+    while (!checkSignal())
+      ;
+    uint32_t delayUS = micros64() - timeBegin;
+    if (delayUS < 30000)
+      client.publish(("distances/" + String(currentId)).c_str(), String(filter.filtered(delayUS)).c_str());
   }
 }
 
@@ -110,10 +94,6 @@ void setup_wifi()
   DEBUG(WiFi.localIP());
 }
 
-void callback(char *topic, byte *payload, unsigned int length)
-{
-}
-
 void reconnect(int id)
 {
   // Loop until we're reconnected
@@ -126,7 +106,6 @@ void reconnect(int id)
     if (client.connect(clientId.c_str()))
     {
       DEBUG("Connected to MQTT server.");
-      client.subscribe("ultrasound_emit");
     }
     else
     {
@@ -145,23 +124,31 @@ String help = "Commands:\n\
 
 void setup()
 {
+  Serial.begin(115200);
+
   EEPROM.begin(sizeof(uint16_t));
   currentId = EEPROM.get(EEPROM_ID_ADDR, currentId);
-  pinMode(trigPin, OUTPUT);
-  pinMode(echoPin, INPUT);
-  Serial.begin(115200);
+
+  pinMode(SYNC_PIN, INPUT_PULLUP);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(SYNC_PIN), onStartUS, FALLING);
+
   Serial.println();
   Serial.println("SmartRescuer Project --- Node Firmware v" + String(VERSION));
   Serial.println("Type \"help\" in shell for commands list");
   Serial.println();
-  //setup_wifi();
-  //client.setServer(MQTT_HOST, MQTT_PORT);
-  //client.setCallback(callback);
+
+  setup_wifi();
+
+  client.setServer(MQTT_HOST, MQTT_PORT);
 }
 
 void loop()
 {
-#ifdef DEBUGGING_ENABLED
+  if (!client.connected())
+    reconnect(currentId);
+  client.loop();
   if (Serial.available())
   {
     String cmd = Serial.readString();
@@ -186,10 +173,4 @@ void loop()
       Serial.println("No such command. Type \"help\" in shell for commands list.");
     Serial.print(SHELLSTART_STR);
   }
-#endif
-
-  Iteration_US();
- // if (!client.connected())
-  //  reconnect(currentId);
- // client.loop();
 }
