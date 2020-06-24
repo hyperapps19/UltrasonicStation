@@ -64,8 +64,11 @@ void ICACHE_RAM_ATTR onStartUS(void)
   if (client.connected())
   {
     uint64_t timeBegin = micros64();
-    while (!checkSignal())
-      ;
+    uint32_t tries = 0;
+    while (!checkSignal() && tries < 100000)
+    {
+      tries++;
+    }
     uint32_t delayUS = micros64() - timeBegin;
     if (delayUS < 30000)
       client.publish(("distances/" + String(currentId)).c_str(), String(filter.filtered(delayUS)).c_str());
@@ -125,7 +128,6 @@ String help = "Commands:\n\
 void setup()
 {
   Serial.begin(115200);
-
   EEPROM.begin(sizeof(uint16_t));
   currentId = EEPROM.get(EEPROM_ID_ADDR, currentId);
 

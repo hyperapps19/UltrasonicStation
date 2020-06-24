@@ -115,6 +115,7 @@
                 "LWIP_FEATURES=1",
                 "LWIP_IPV6=0",
                 "VTABLES_IN_FLASH",
+                "__PLATFORMIO_BUILD_DEBUG__",
                 ""
             ],
             "intelliSenseMode": "clang-x64",
